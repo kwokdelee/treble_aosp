@@ -1,7 +1,8 @@
 name: Build
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 5' # At 00:00 on Friday
 
 jobs:
   setup:
@@ -39,3 +40,4 @@ jobs:
     steps:
       - name: Cleanup
         run: docker exec aosp /bin/sh -c "docker stop aosp && docker rm aosp"
+        
