@@ -2,50 +2,49 @@
 
 echo
 echo "--------------------------------------"
-echo "          AOSP 14.0 Buildbot          "
+echo "    Pixel Experience 14.0 Buildbot    "
 echo "                  by                  "
-echo "                ponces                "
+echo "                kwokdelee                "
 echo "--------------------------------------"
 echo
 
 set -e
 
-BL=$PWD/treble_aosp
+BL=$PWD/treble_pixel
 BD=$HOME/builds
 
 initRepos() {
     if [ ! -d .repo ]; then
         echo "--> Initializing workspace"
-        repo init -u https://android.googlesource.com/platform/manifest -b android-14.0.0_r38 --git-lfs
+        repo init -u https://github.com/PixelExperience/manifest -b fourteen
         echo
 
         echo "--> Preparing local manifest"
         mkdir -p .repo/local_manifests
-        cp $BL/build/default.xml .repo/local_manifests/default.xml
-        cp $BL/build/remove.xml .repo/local_manifests/remove.xml
+        cp $BL/manifest.xml .repo/local_manifests/pixel.xml
         echo
     fi
 }
 
 syncRepos() {
     echo "--> Syncing repos"
-    repo sync -c --force-sync --no-clone-bundle --no-tags -j$(nproc --all) || repo sync -c --force-sync --no-clone-bundle --no-tags -j$(nproc --all)
+    repo sync -c --force-sync --no-clone-bundle --no-tags -j$(nproc --all)
     echo
 }
 
 applyPatches() {
     echo "--> Applying TrebleDroid patches"
-    bash $BL/patch.sh $BL trebledroid
+    bash $BL/apply-patches.sh $BL trebledroid
     echo
 
     echo "--> Applying personal patches"
-    bash $BL/patch.sh $BL personal
+    bash $BL/apply-patches.sh $BL personal
     echo
 
     echo "--> Generating makefiles"
     cd device/phh/treble
-    cp $BL/build/aosp.mk .
-    bash generate.sh aosp
+    cp $BL/pe.mk .
+    bash generate.sh pe
     cd ../../..
     echo
 }
@@ -67,47 +66,29 @@ buildTrebleApp() {
 }
 
 buildVariant() {
-    echo "--> Building $1"
-    lunch "$1"-ap1a-userdebug
+    echo "--> Building treble_arm64_bvN"
+    lunch treble_arm64_bvN-userdebug
     make -j$(nproc --all) installclean
     make -j$(nproc --all) systemimage
-    mv $OUT/system.img $BD/system-"$1".img
+    mv $OUT/system.img $BD/system-treble_arm64_bvN.img
     echo
 }
 
 buildVndkliteVariant() {
-    echo "--> Building $1-vndklite"
-    [[ "$1" == *"a64"* ]] && arch="32" || arch="64"
-    cd treble_adapter
-    sudo bash lite-adapter.sh "$arch" $BD/system-"$1".img
-    mv s.img $BD/system-"$1"-vndklite.img
-    sudo rm -rf d tmp
+    echo "--> Building treble_arm64_bvN-vndklite"
+    cd sas-creator
+    sudo bash lite-adapter.sh 64 $BD/system-treble_arm64_bvN.img
+    cp s.img $BD/system-treble_arm64_bvN-vndklite.img
+    sudo rm -rf s.img d tmp
     cd ..
     echo
-}
-
-buildVariants() {
-    buildVariant treble_a64_bvN
-    buildVariant treble_a64_bgN
-    buildVariant treble_arm64_bvN
-    buildVariant treble_arm64_bgN
-    buildVndkliteVariant treble_a64_bvN
-    buildVndkliteVariant treble_a64_bgN
-    buildVndkliteVariant treble_arm64_bvN
-    buildVndkliteVariant treble_arm64_bgN
 }
 
 generatePackages() {
     echo "--> Generating packages"
     buildDate="$(date +%Y%m%d)"
-    find $BD/ -name "system-treble_*.img" | while read file; do
-        filename="$(basename $file)"
-        [[ "$filename" == *"_a64"* ]] && arch="arm32_binder64" || arch="arm64"
-        [[ "$filename" == *"_bvN"* ]] && variant="vanilla" || variant="gapps"
-        [[ "$filename" == *"-vndklite"* ]] && vndk="-vndklite" || vndk=""
-        name="aosp-${arch}-ab-${variant}${vndk}-14.0-$buildDate"
-        xz -cv "$file" -T0 > $BD/"$name".img.xz
-    done
+    xz -cv $BD/system-treble_arm64_bvN.img -T0 > $BD/PixelExperience_arm64-ab-14.0-$buildDate-UNOFFICIAL.img.xz
+    xz -cv $BD/system-treble_arm64_bvN-vndklite.img -T0 > $BD/PixelExperience_arm64-ab-vndklite-14.0-$buildDate-UNOFFICIAL.img.xz
     rm -rf $BD/system-*.img
     echo
 }
@@ -115,22 +96,22 @@ generatePackages() {
 generateOta() {
     echo "--> Generating OTA file"
     version="$(date +v%Y.%m.%d)"
-    buildDate="$(date +%Y%m%d)"
     timestamp="$START"
     json="{\"version\": \"$version\",\"date\": \"$timestamp\",\"variants\": ["
-    find $BD/ -name "aosp-*-14.0-$buildDate.img.xz" | sort | {
+    find $BD/ -name "PixelExperience_*" | sort | {
         while read file; do
             filename="$(basename $file)"
-            [[ "$filename" == *"-arm32"* ]] && arch="a64" || arch="arm64"
-            [[ "$filename" == *"-vanilla"* ]] && variant="v" || variant="g"
-            [[ "$filename" == *"-vndklite"* ]] && vndk="-vndklite" || vndk=""
-            name="treble_${arch}_b${variant}N${vndk}"
+            if [[ $filename == *"vndklite"* ]]; then
+                name="treble_arm64_bvN-vndklite"
+            else
+                name="treble_arm64_bvN"
+            fi
             size=$(wc -c $file | awk '{print $1}')
-            url="https://github.com/ponces/treble_aosp/releases/download/$version/$filename"
+            url="https://github.com/kwokdelee/treble_build_pe/releases/download/$version/$filename"
             json="${json} {\"name\": \"$name\",\"size\": \"$size\",\"url\": \"$url\"},"
         done
         json="${json%?}]}"
-        echo "$json" | jq . > $BL/config/ota.json
+        echo "$json" | jq . > $BL/ota.json
     }
     echo
 }
@@ -142,7 +123,8 @@ syncRepos
 applyPatches
 setupEnv
 buildTrebleApp
-buildVariants
+buildVariant
+buildVndkliteVariant
 generatePackages
 generateOta
 
